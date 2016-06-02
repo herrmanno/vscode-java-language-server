@@ -18,6 +18,8 @@ import {tmpdir} from "os"
 import {writeFileSync} from "fs"
 import * as path from "path"
 
+import {Socket} from "net"
+
 // Create a connection for the server. The connection uses Node's IPC as a transport
 let connection: IConnection = createConnection(new IPCMessageReader(process), new IPCMessageWriter(process));
 
@@ -53,7 +55,7 @@ documents.onDidChangeContent((change) => {
 		clearTimeout(validate);
 	validate = setTimeout(() => {
 		validateTextDocument(change.document);
-	}, 200);
+	}, 100);
 });
 
 // The settings interface describe the server relevant settings part
@@ -64,25 +66,51 @@ interface Settings {
 // These are the example settings we defined in the client's package.json
 // file
 interface ExampleSettings {
-	maxNumberOfProblems: number;
+	classPath: string[];
 }
 
 // hold the maxNumberOfProblems setting
-let maxNumberOfProblems: number;
+let classPath = "";
 // The settings have changed. Is send on server activation
 // as well.
 connection.onDidChangeConfiguration((change) => {
 	let settings = <Settings>change.settings;
-	maxNumberOfProblems = settings.languageServerExample.maxNumberOfProblems || 100;
+	classPath = settings.languageServerExample.classPath.join(";");
 	// Revalidate any open text documents
 	documents.all().forEach(validateTextDocument);
 });
+
 function validateTextDocument(textDocument: TextDocument): void {
 	let i = 0;
 	let diagnostics: Diagnostic[] = [];
 	
 	let file = global.unescape(parse(textDocument.uri).pathname.substring(1));
 	let fileName = path.basename(file);
+	
+	let socket = new Socket();
+	socket.connect(56789);
+	socket.write("LINT" + " " + fileName + " " + classPath + "\n");
+	socket.write(textDocument.getText() + "\n");
+	socket.write("END\n");
+	socket.on("data", data => {
+		let str = data.toString().replace(/\n/gm, " ").replace(/\s*$/, "");
+		let json = JSON.parse(str);
+		let diagnostics = json.map(d => {
+			return {
+				range: {
+				start: {line: (+d.line)-1, character: +d.position},
+				end: {line: (+d.line)-1, character: +d.position}
+			},
+			message: d.message,
+			severity: DiagnosticSeverity.Error,
+			source: "java"
+			}
+		});
+		connection.sendDiagnostics({ uri: textDocument.uri, diagnostics});
+	});	
+	
+	if(1==1) return;
+	
 	let tmpFile = path.resolve(tmpdir(), fileName); 
 	writeFileSync(tmpFile, textDocument.getText())
 	
