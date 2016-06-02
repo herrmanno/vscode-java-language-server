@@ -29,14 +29,14 @@ export function activate(context: ExtensionContext) {
 		documentSelector: ['java'],
 		synchronize: {
 			// Synchronize the setting section 'languageServerExample' to the server
-			configurationSection: 'languageServerExample',
+			configurationSection: 'java',
 			// Notify the server about file changes to '.clientrc files contain in the workspace
-			fileEvents: workspace.createFileSystemWatcher('**/.clientrc')
+			fileEvents: workspace.createFileSystemWatcher('**/.javaconfig')
 		}
 	}
 	
 	// Create the language client and start the client.
-	let disposable = new LanguageClient('Language Server Example', serverOptions, clientOptions).start();
+	let disposable = new LanguageClient('Java Language Server', serverOptions, clientOptions).start();
 	
 	// Push the disposable to the context's subscriptions so that the 
 	// client can be deactivated on extension deactivation

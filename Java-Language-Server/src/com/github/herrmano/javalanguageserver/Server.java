@@ -26,14 +26,20 @@ import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 
 public class Server {
-
-	ServerSocket socket;
+	
+	private ServerSocket socket;
+	private JavaCompiler compiler;
 	private boolean abort = false;
 	private Path tmpDir;
+	private String classPath = "";
 	
 	public void start(int port) throws UnknownHostException, IOException {
+		this.compiler = ToolProvider.getSystemJavaCompiler();
+		if(null == this.compiler)
+			System.out.println("No Compiler found! Please specify JDK location");
+		
+		this.socket = new ServerSocket(port);
 		this.tmpDir = Files.createTempDirectory("java-languageserver");
-		socket = new ServerSocket(port);
 		this.loop();
 	}
 	
@@ -58,13 +64,26 @@ public class Server {
 	
 	protected void listen(BufferedReader ir, PrintWriter os) throws Exception {
 		String header = ir.readLine();
-		String method = header.split(" ")[0];
-		String className = header.split(" ")[1];
-		String classPath = header.split(" ")[2];
+		String method = header.split("\t")[0];
 		
 		switch (method) {
 		case "LINT":
-			this.onLint(ir, os, className, classPath);
+			String className = header.split("\t")[1];
+			this.onLint(ir, os, className);
+			break;
+		case "SET":
+			String property = header.split("\t")[1];
+			switch(property) {
+				case "CLASSPATH":
+					this.classPath  = header.split("\t")[2];
+					break;
+				case "JDK":
+					String jdkHome = header.split("\t")[2];
+					System.setProperty("java.home", jdkHome);
+					this.compiler = ToolProvider.getSystemJavaCompiler();
+					if(null == this.compiler)
+						System.out.println("Wrong JDK Path");
+			}
 			break;
 
 		default:
@@ -73,7 +92,7 @@ public class Server {
 		}
 	}
 
-	private void onLint(BufferedReader ir, PrintWriter os, String className, String classPath) throws Exception {
+	private void onLint(BufferedReader ir, PrintWriter os, String className) throws Exception {
 		String classString = "";
 		String line;
 		do {
@@ -88,12 +107,11 @@ public class Server {
 		p.close();
 		
 		//------ Compile via API
-		JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
 		DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<JavaFileObject>();
 		StandardJavaFileManager fileManager = compiler.getStandardFileManager( diagnostics, null, null );
 		Iterable<? extends JavaFileObject> units;
 		units = fileManager.getJavaFileObjectsFromFiles( Arrays.asList( javaSrcFile ) );
-		List<String> options = Arrays.asList(new String[]{"-cp", classPath});
+		List<String> options = Arrays.asList(new String[]{"-cp", classPath, "-d", tmpDir.toAbsolutePath().toString()});
 		CompilationTask task = compiler.getTask( null, fileManager, diagnostics, options, null, units );
 		task.call();		
 		fileManager.close();

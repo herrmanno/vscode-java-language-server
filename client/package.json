@@ -18,12 +18,17 @@
 	"contributes": {
 		"configuration": {
 			"type": "object",
-			"title": "Example configuration",
+			"title": "Java Language Server Example configuration",
 			"properties": {
 				"java.classPath": {
 					"type": "array",
 					"default": "",
 					"description": "Java classpath for project"
+				},
+				"java.jdk": {
+					"type": "string",
+					"default": "",
+					"description": "JDK Path"
 				}
 			}
 		}

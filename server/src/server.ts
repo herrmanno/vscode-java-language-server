@@ -12,7 +12,7 @@ import {
 	CompletionItem, CompletionItemKind
 } from 'vscode-languageserver';
 
-import {spawn, exec} from "child_process"
+import {spawn, exec, ChildProcess} from "child_process"
 import {parse} from "url"
 import {tmpdir} from "os"
 import {writeFileSync} from "fs"
@@ -34,6 +34,8 @@ documents.listen(connection);
 // in the passed params the rootPath of the workspace plus the client capabilites. 
 let workspaceRoot: string;
 connection.onInitialize((params): InitializeResult => {
+	startJavaServer();
+	
 	workspaceRoot = params.rootPath;
 	return {
 		capabilities: {
@@ -46,6 +48,14 @@ connection.onInitialize((params): InitializeResult => {
 		}
 	}
 });
+
+let javaServer: ChildProcess;
+
+function startJavaServer() {
+	let serverPath = path.resolve(__dirname, "..", "..", "Java-Language-Server", "server.jar");
+	javaServer = spawn("java", ["-jar", serverPath]);
+	javaServer.stderr.pipe(process.stderr);
+}
 
 // The content of a text document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
@@ -60,22 +70,34 @@ documents.onDidChangeContent((change) => {
 
 // The settings interface describe the server relevant settings part
 interface Settings {
-	languageServerExample: ExampleSettings;
+	java: ExampleSettings;
 }
 
 // These are the example settings we defined in the client's package.json
 // file
 interface ExampleSettings {
 	classPath: string[];
+	jdk: string;
 }
 
 // hold the maxNumberOfProblems setting
 let classPath = "";
+let jdk = "";
 // The settings have changed. Is send on server activation
 // as well.
 connection.onDidChangeConfiguration((change) => {
 	let settings = <Settings>change.settings;
-	classPath = settings.languageServerExample.classPath.join(";");
+	classPath = settings.java.classPath.join(";");
+	jdk = settings.java.jdk;
+	
+	
+	let socket1 = new Socket();
+	socket1.connect(56789);
+	socket1.write("SET" + "\t" + "CLASSPATH" + "\t" + classPath + "\n");
+	let socket2 = new Socket();
+	socket2.connect(56789);
+	socket2.write("SET" + "\t" + "JDK" + "\t" + jdk + "\n");
+	
 	// Revalidate any open text documents
 	documents.all().forEach(validateTextDocument);
 });
@@ -89,7 +111,7 @@ function validateTextDocument(textDocument: TextDocument): void {
 	
 	let socket = new Socket();
 	socket.connect(56789);
-	socket.write("LINT" + " " + fileName + " " + classPath + "\n");
+	socket.write("LINT" + "\t" + fileName + "\n");
 	socket.write(textDocument.getText() + "\n");
 	socket.write("END\n");
 	socket.on("data", data => {
@@ -109,8 +131,7 @@ function validateTextDocument(textDocument: TextDocument): void {
 		connection.sendDiagnostics({ uri: textDocument.uri, diagnostics});
 	});	
 	
-	if(1==1) return;
-	
+	/*
 	let tmpFile = path.resolve(tmpdir(), fileName); 
 	writeFileSync(tmpFile, textDocument.getText())
 	
@@ -142,7 +163,7 @@ function validateTextDocument(textDocument: TextDocument): void {
 		});
 		connection.sendDiagnostics({ uri: textDocument.uri, diagnostics: diagnostics.slice(0,1) });
 	});
-	
+	*/
 }
 
 function getErrorAndLine(line: string): {err:string, lineNr:number} {
