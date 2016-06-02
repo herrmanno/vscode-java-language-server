@@ -12,6 +12,12 @@ import {
 	CompletionItem, CompletionItemKind
 } from 'vscode-languageserver';
 
+import {spawn, exec} from "child_process"
+import {parse} from "url"
+import {tmpdir} from "os"
+import {writeFileSync} from "fs"
+import * as path from "path"
+
 // Create a connection for the server. The connection uses Node's IPC as a transport
 let connection: IConnection = createConnection(new IPCMessageReader(process), new IPCMessageWriter(process));
 
@@ -41,8 +47,13 @@ connection.onInitialize((params): InitializeResult => {
 
 // The content of a text document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
+let validate = void 0;
 documents.onDidChangeContent((change) => {
-	validateTextDocument(change.document);
+	if(validate)
+		clearTimeout(validate);
+	validate = setTimeout(() => {
+		validateTextDocument(change.document);
+	}, 200);
 });
 
 // The settings interface describe the server relevant settings part
@@ -66,29 +77,73 @@ connection.onDidChangeConfiguration((change) => {
 	// Revalidate any open text documents
 	documents.all().forEach(validateTextDocument);
 });
-
 function validateTextDocument(textDocument: TextDocument): void {
+	let i = 0;
 	let diagnostics: Diagnostic[] = [];
-	let lines = textDocument.getText().split(/\r?\n/g);
-	let problems = 0;
-	for (var i = 0; i < lines.length && problems < maxNumberOfProblems; i++) {
-		let line = lines[i];
-		let index = line.indexOf('typescript');
-		if (index >= 0) {
-			problems++;
-			diagnostics.push({
-				severity: DiagnosticSeverity.Warning,
-				range: {
-					start: { line: i, character: index},
-					end: { line: i, character: index + 10 }
-				},
-				message: `${line.substr(index, 10)} should be spelled TypeScript`,
-				source: 'ex'
-			});
+	
+	let file = global.unescape(parse(textDocument.uri).pathname.substring(1));
+	let fileName = path.basename(file);
+	let tmpFile = path.resolve(tmpdir(), fileName); 
+	writeFileSync(tmpFile, textDocument.getText())
+	
+	let data: Buffer = new Buffer("");
+	let javac = spawn("javac", [tmpFile]);
+	javac.stderr.on("data", (buffer) => {
+		if(data)
+			data = Buffer.concat([data, buffer])
+		else
+			data = buffer;
+	});
+	
+	javac.on("close", () => {
+		if(!data || !data.toString()) {
+			connection.sendDiagnostics({ uri: textDocument.uri, diagnostics: [] });
+			return;
+		}
+		
+		let position = getErrorPosition(data);
+		let {err, lineNr} = getErrorAndLine(data.toString());
+		diagnostics.push({
+			range: {
+				start: {line: lineNr-1, character: position},
+				end: {line: lineNr-1, character: position}
+			},
+			message: err,
+			severity: DiagnosticSeverity.Error,
+			source: "java"
+		});
+		connection.sendDiagnostics({ uri: textDocument.uri, diagnostics: diagnostics.slice(0,1) });
+	});
+	
+}
+
+function getErrorAndLine(line: string): {err:string, lineNr:number} {
+	try {
+		let [_, lineNr, err] = line.match(/\.java:(\d+): error: (.*)/);
+		return {err, lineNr: +lineNr};
+	} catch(e) {
+		return {
+			err: "Error while running 'javac'",
+			lineNr: 1
 		}
 	}
-	// Send the computed diagnostics to VSCode.
-	connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
+}
+
+function getErrorPosition(buffer: Buffer): number {
+	let caretPos = ((buf: Buffer) => {
+		let pos = buf.length-1;
+		while(pos > -1 && buf.readInt8(pos) !== "^".charCodeAt(0)) pos--;
+		return pos;
+	})(buffer);
+	
+	let offset = ((buf: Buffer, pos) => {
+		let n = 0
+		while(pos > -1 && buf.readInt8(pos) === " ".charCodeAt(0)) pos-- && n++;
+		return n;
+	})(buffer, caretPos-1);
+	
+	offset = offset < 1 ? 1 : offset;
+	return offset;
 }
 
 connection.onDidChangeWatchedFiles((change) => {
