@@ -1,49 +1,82 @@
 {
-	"name": "language-client-example",
-	"description": "VSCode part of a language server",
-	"author": "Microsoft Corporation",
-	"license": "MIT",
-	"version": "0.0.1",
-	"publisher": "vscode",
-	"engines": {
-		"vscode": "^0.10.10"
-	},
-	"categories": [
-		"Other"
-	],
-	"activationEvents": [
-		"onLanguage:java"
-	],
-	"main": "./out/src/extension",
-	"contributes": {
-		"configuration": {
-			"type": "object",
-			"title": "Java Language Server Example configuration",
-			"properties": {
-				"java.classPath": {
-					"type": "array",
-					"default": "",
-					"description": "Java classpath for project"
+  "name": "language-client-example",
+  "description": "VSCode part of a language server",
+  "author": "Microsoft Corporation",
+  "license": "MIT",
+  "version": "0.0.1",
+  "publisher": "vscode",
+  "engines": {
+    "vscode": "^0.10.10"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:java"
+  ],
+  "main": "./out/src/extension",
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "Java Language Server Example configuration",
+      "properties": {
+        "java.classPath": {
+          "type": "array",
+          "default": "",
+          "description": "Java classpath for project"
+        },
+        "java.jdk": {
+          "type": "string",
+          "default": "",
+          "description": "JDK Path"
+        }
+      }
+    },
+    "debuggers": [
+      {
+        "type": "Java",
+        "label": "Java",
+        "enableBreakpointsFor": {"languageIds": ["java"]},
+        "program": "./out/debugger.js",
+        "runtime": "node",
+        "runtimeArgs": [
+          "--debug=6789"
+        ],
+        "configurationAttributes": {
+					"launch": {
+						"required": [ "program" ],
+						"properties": {
+							"program": {
+								"type": "string",
+								"description": "Workspace relative path to a text file.",
+								"default": "Main"
+							}
+						}
+					}
 				},
-				"java.jdk": {
-					"type": "string",
-					"default": "",
-					"description": "JDK Path"
-				}
-			}
-		}
-	},	
-	"scripts": {
-		"vscode:prepublish": "node ./node_modules/vscode/bin/compile",
-		"compile": "node ./node_modules/vscode/bin/compile -watch -p ./",
-		"postinstall": "node ./node_modules/vscode/bin/install"
-
-	},
-	"devDependencies": {
-		"typescript": "^1.8.9",
-		"vscode": "^0.11.0"
-	},
-	"dependencies": {
-		"vscode-languageclient": "^2.2.1"
-	}
+				"initialConfigurations": [
+					{
+						"name": "Java-Debug",
+						"type": "Java",
+						"request": "launch",
+						"program": "Main"
+					}
+				]
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "node ./node_modules/vscode/bin/compile",
+    "compile": "node ./node_modules/vscode/bin/compile -watch -p ./",
+    "postinstall": "node ./node_modules/vscode/bin/install"
+  },
+  "devDependencies": {
+    "typescript": "^1.8.9",
+    "vscode": "^0.11.0"
+  },
+  "dependencies": {
+    "vscode-debugadapter": "^1.9.0",
+    "vscode-debugprotocol": "^1.9.0",
+    "vscode-languageclient": "^2.2.1"
+  }
 }

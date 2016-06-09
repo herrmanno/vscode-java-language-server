@@ -17,29 +17,25 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 
-import javax.tools.Diagnostic;
-import javax.tools.DiagnosticCollector;
-import javax.tools.JavaCompiler;
+import javax.tools.*;
 import javax.tools.JavaCompiler.CompilationTask;
-import javax.tools.JavaFileObject;
-import javax.tools.StandardJavaFileManager;
-import javax.tools.ToolProvider;
 
 public class Server {
 	
 	private ServerSocket socket;
 	private JavaCompiler compiler;
 	private boolean abort = false;
-	private Path tmpDir;
+	//private Path tmpDir;
 	private String classPath = "";
 	
-	public void start(int port) throws UnknownHostException, IOException {
+	public void start(int port) throws IOException {
 		this.compiler = ToolProvider.getSystemJavaCompiler();
 		if(null == this.compiler)
 			System.out.println("No Compiler found! Please specify JDK location");
 		
 		this.socket = new ServerSocket(port);
-		this.tmpDir = Files.createTempDirectory("java-languageserver");
+		//this.tmpDir = Files.createTempDirectory("java-languageserver");
+		System.out.println("RUNNING");
 		this.loop();
 	}
 	
@@ -85,7 +81,9 @@ public class Server {
 						System.out.println("Wrong JDK Path");
 			}
 			break;
-
+		case "KILL":
+			System.exit(0);
+			break;
 		default:
 			this.onError(ir, os);
 			break;
@@ -99,19 +97,23 @@ public class Server {
 			line = ir.readLine();
 			classString += line.equals("END") ? "" : (line + "\n");
 		} while(!line.equals("END"));
-		
+
+
+		StringJavaFileObject javaSrcFile = new StringJavaFileObject(className, classString);
 		//------- Write class to temp file
-		File javaSrcFile = this.tmpDir.resolve(className).toFile();
-		Writer p = new FileWriter( javaSrcFile );
-		p.write( classString );
-		p.close();
+		//File javaSrcFile = this.tmpDir.resolve(className).toFile();
+		//Writer p = new FileWriter( javaSrcFile );
+		//p.write( classString );
+		//p.close();
 		
 		//------ Compile via API
 		DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<JavaFileObject>();
-		StandardJavaFileManager fileManager = compiler.getStandardFileManager( diagnostics, null, null );
+		JavaFileManager fileManager = new MemJavaFileManager(compiler);
+		//StandardJavaFileManager fileManager = compiler.getStandardFileManager( diagnostics, null, null );
 		Iterable<? extends JavaFileObject> units;
-		units = fileManager.getJavaFileObjectsFromFiles( Arrays.asList( javaSrcFile ) );
-		List<String> options = Arrays.asList(new String[]{"-cp", classPath, "-d", tmpDir.toAbsolutePath().toString()});
+		units = Arrays.asList(javaSrcFile);
+		//List<String> options = Arrays.asList(new String[]{"-cp", classPath, "-d", tmpDir.toAbsolutePath().toString()});
+		List<String> options = Arrays.asList(new String[]{"-cp", classPath});
 		CompilationTask task = compiler.getTask( null, fileManager, diagnostics, options, null, units );
 		task.call();		
 		fileManager.close();
@@ -123,7 +125,8 @@ public class Server {
 			ret += "{";
 			ret += "\"message\":" + "\"" + d.getMessage(null) + "\"" + ",";
 			ret += "\"line\":" + "\"" + d.getLineNumber() + "\"" + ",";
-			ret += "\"position\":" + "\"" + d.getColumnNumber() + "\"";
+			ret += "\"position\":" + "\"" + d.getColumnNumber() + "\"" + ",";
+			ret += "\"type\":" + "\"" + d.getKind() + "\"";
 			ret += "}";
 			ret += i+1 < diagnosticsList.size() ? "," : "";
 		}

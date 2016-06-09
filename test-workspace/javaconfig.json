@@ -1,0 +1,7 @@
+{
+    "classPath": [
+        "./src",
+        "./lib",
+        "../client/server.jar"
+    ]
+}

@@ -28,10 +28,10 @@ export function activate(context: ExtensionContext) {
 		// Register the server for plain text documents
 		documentSelector: ['java'],
 		synchronize: {
-			// Synchronize the setting section 'languageServerExample' to the server
+			// Synchronize the setting section 'java' to the server
 			configurationSection: 'java',
 			// Notify the server about file changes to '.clientrc files contain in the workspace
-			fileEvents: workspace.createFileSystemWatcher('**/.javaconfig')
+			fileEvents: workspace.createFileSystemWatcher('**/javaconfig.json')
 		}
 	}
 	

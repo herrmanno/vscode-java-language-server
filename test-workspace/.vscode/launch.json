@@ -1,0 +1,11 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Java-Debug",
+            "type": "Java",
+            "request": "launch",
+            "program": "${workspaceroot}/src/test/Main"
+        }
+    ]
+}

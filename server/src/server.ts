@@ -14,10 +14,9 @@ import {
 
 import {spawn, exec, ChildProcess} from "child_process"
 import {parse} from "url"
-import {tmpdir} from "os"
-import {writeFileSync} from "fs"
+import {tmpdir, platform} from "os"
+import {writeFileSync, readFileSync} from "fs"
 import * as path from "path"
-
 import {Socket} from "net"
 
 // Create a connection for the server. The connection uses Node's IPC as a transport
@@ -33,84 +32,124 @@ documents.listen(connection);
 // After the server has started the client sends an initilize request. The server receives
 // in the passed params the rootPath of the workspace plus the client capabilites. 
 let workspaceRoot: string;
-connection.onInitialize((params): InitializeResult => {
-	startJavaServer();
-	
+connection.onInitialize((params): Promise<InitializeResult> => {
 	workspaceRoot = params.rootPath;
-	return {
-		capabilities: {
-			// Tell the client that the server works in FULL text document sync mode
-			textDocumentSync: documents.syncKind,
-			// Tell the client that the server support code complete
-			completionProvider: {
-				resolveProvider: true
+	
+	return new Promise<InitializeResult>((resolve, reject) => {
+		let res = resolve.bind({
+			capabilities: {
+				// Tell the client that the server works in FULL text document sync mode
+				textDocumentSync: documents.syncKind,
+				// Tell the client that the server support code complete
+				completionProvider: {
+					resolveProvider: false
+				}
 			}
-		}
-	}
+		});
+		
+		let s = startJavaServer();
+		javaServer.stdout.on("data", data => {
+			if(data.toString().indexOf("RUNNING") !== -1) {
+				process.stdout.write("Java server started \n");
+				res();	
+			}
+			else if(data.toString().indexOf("PORT_USED") !== -1) {
+                process.stdout.write("Java server already running \n");
+                process.nextTick(() => javaServer = null);
+                res();
+            }
+		})
+		
+	});
+	
 });
 
-let javaServer: ChildProcess;
+process.on("exit", (code) => {
+	process.stderr.write("process.exit ("+code+"): Stopping Java Language Server\n");
+	javaServer && (javaServer.stdout.pause(), javaServer.stderr.pause(), true) && javaServer.kill("SIGINT");
+	createSocket().write("KILL");
+});
 
+process.on("SIGINT", (code) => {
+	process.stderr.write("process.exit ("+code+"): Stopping Java Language Server\n");
+	javaServer && (javaServer.stdout.pause(), javaServer.stderr.pause(), true) && javaServer.kill("SIGINT");
+});
+
+process.on("SIGTERM", (code) => {
+	process.stderr.write("process.exit ("+code+"): Stopping Java Language Server\n");
+	javaServer && (javaServer.stdout.pause(), javaServer.stderr.pause(), true) && javaServer.kill("SIGINT");
+});
+
+process.on('uncaughtException', (err) => {
+  process.stderr.write(`Caught exception: ${err} \n ${err.stack} \n\n`);
+  javaServer && (javaServer.stdout.pause(), javaServer.stderr.pause(), true) && javaServer.kill("SIGINT");
+});
+
+// The java process which handles linting
+let javaServer: ChildProcess;
 function startJavaServer() {
-	let serverPath = path.resolve(__dirname, "..", "..", "Java-Language-Server", "server.jar");
+	process.stdout.write("Starting Java Language Server\n");
+	
+	let serverPath = path.resolve(__dirname, "..", "server.jar");
 	javaServer = spawn("java", ["-jar", serverPath]);
 	javaServer.stderr.pipe(process.stderr);
 }
 
-// The content of a text document has changed. This event is emitted
-// when the text document first opened or when its content has changed.
-let validate = void 0;
+let bounce = void 0;
+let bounceInterval = 100;
+// Debounce validation to reduce traffic
 documents.onDidChangeContent((change) => {
-	if(validate)
-		clearTimeout(validate);
-	validate = setTimeout(() => {
+	if(bounce)
+		clearTimeout(bounce);
+	bounce = setTimeout(() => {
 		validateTextDocument(change.document);
-	}, 100);
+	}, bounceInterval);
 });
 
 // The settings interface describe the server relevant settings part
 interface Settings {
-	java: ExampleSettings;
+	java: JavaSettings;
 }
 
 // These are the example settings we defined in the client's package.json
 // file
-interface ExampleSettings {
+interface JavaSettings {
 	classPath: string[];
 	jdk: string;
 }
 
-// hold the maxNumberOfProblems setting
+// hold setting
 let classPath = "";
 let jdk = "";
 // The settings have changed. Is send on server activation
 // as well.
-connection.onDidChangeConfiguration((change) => {
+connection.onDidChangeConfiguration(onDidChangeConfiguration);
+
+function onDidChangeConfiguration(change) {
 	let settings = <Settings>change.settings;
-	classPath = settings.java.classPath.join(";");
+	classPath = (settings.java.classPath || []).map(cp => path.resolve(workspaceRoot, cp)).join(platform() === "win32" ? ";" : ":");	
 	jdk = settings.java.jdk;
+		
+	//------- trasnfer settings to java server
+	if(classPath) {
+		let socket1 = createSocket();
+		socket1.write("SET" + "\t" + "CLASSPATH" + "\t" + classPath + "\n");
+	}
 	
-	
-	let socket1 = new Socket();
-	socket1.connect(56789);
-	socket1.write("SET" + "\t" + "CLASSPATH" + "\t" + classPath + "\n");
-	let socket2 = new Socket();
-	socket2.connect(56789);
-	socket2.write("SET" + "\t" + "JDK" + "\t" + jdk + "\n");
+	if(jdk) {
+		let socket2 = createSocket();
+		socket2.write("SET" + "\t" + "JDK" + "\t" + jdk + "\n");
+	}
 	
 	// Revalidate any open text documents
 	documents.all().forEach(validateTextDocument);
-});
+};
 
 function validateTextDocument(textDocument: TextDocument): void {
-	let i = 0;
-	let diagnostics: Diagnostic[] = [];
-	
 	let file = global.unescape(parse(textDocument.uri).pathname.substring(1));
 	let fileName = path.basename(file);
 	
-	let socket = new Socket();
-	socket.connect(56789);
+	let socket = createSocket();
 	socket.write("LINT" + "\t" + fileName + "\n");
 	socket.write(textDocument.getText() + "\n");
 	socket.write("END\n");
@@ -130,77 +169,35 @@ function validateTextDocument(textDocument: TextDocument): void {
 		});
 		connection.sendDiagnostics({ uri: textDocument.uri, diagnostics});
 	});	
-	
-	/*
-	let tmpFile = path.resolve(tmpdir(), fileName); 
-	writeFileSync(tmpFile, textDocument.getText())
-	
-	let data: Buffer = new Buffer("");
-	let javac = spawn("javac", [tmpFile]);
-	javac.stderr.on("data", (buffer) => {
-		if(data)
-			data = Buffer.concat([data, buffer])
-		else
-			data = buffer;
-	});
-	
-	javac.on("close", () => {
-		if(!data || !data.toString()) {
-			connection.sendDiagnostics({ uri: textDocument.uri, diagnostics: [] });
-			return;
-		}
-		
-		let position = getErrorPosition(data);
-		let {err, lineNr} = getErrorAndLine(data.toString());
-		diagnostics.push({
-			range: {
-				start: {line: lineNr-1, character: position},
-				end: {line: lineNr-1, character: position}
-			},
-			message: err,
-			severity: DiagnosticSeverity.Error,
-			source: "java"
-		});
-		connection.sendDiagnostics({ uri: textDocument.uri, diagnostics: diagnostics.slice(0,1) });
-	});
-	*/
-}
-
-function getErrorAndLine(line: string): {err:string, lineNr:number} {
-	try {
-		let [_, lineNr, err] = line.match(/\.java:(\d+): error: (.*)/);
-		return {err, lineNr: +lineNr};
-	} catch(e) {
-		return {
-			err: "Error while running 'javac'",
-			lineNr: 1
-		}
-	}
-}
-
-function getErrorPosition(buffer: Buffer): number {
-	let caretPos = ((buf: Buffer) => {
-		let pos = buf.length-1;
-		while(pos > -1 && buf.readInt8(pos) !== "^".charCodeAt(0)) pos--;
-		return pos;
-	})(buffer);
-	
-	let offset = ((buf: Buffer, pos) => {
-		let n = 0
-		while(pos > -1 && buf.readInt8(pos) === " ".charCodeAt(0)) pos-- && n++;
-		return n;
-	})(buffer, caretPos-1);
-	
-	offset = offset < 1 ? 1 : offset;
-	return offset;
 }
 
 connection.onDidChangeWatchedFiles((change) => {
-	// Monitored files have change in VSCode
-	connection.console.log('We recevied an file change event');
+	try {
+		let configFile = readFileSync(change.changes[0].uri.replace("file://", "")).toString();
+		let content = {
+			settings: {
+				java: JSON.parse(configFile)
+			}
+		}
+		onDidChangeConfiguration(content);
+	} catch(e) {
+		process.stderr.write(`Error while processing .javaconfig file: ${e}`);
+	}
 });
 
+function createSocket(): Socket {
+	let s = new Socket();
+	/*
+	s.on("error", (err) => {
+		process.stderr.write("Socket error: " + err + "\n");
+	});
+	*/
+	s.connect(56789);
+	
+	return s;
+}
 
+/*
 // This handler provides the initial list of the completion items.
 connection.onCompletion((textDocumentPosition: TextDocumentPositionParams): CompletionItem[] => {
 	// The pass parameter contains the position of the text document in 
@@ -232,6 +229,7 @@ connection.onCompletionResolve((item: CompletionItem): CompletionItem => {
 	}
 	return item;
 });
+*/
 
 /*
 connection.onDidOpenTextDocument((params) => {
