@@ -152,7 +152,12 @@ class MockDebugSession extends DebugSession {
 		};
 		this.sendResponse(response);
 		*/
-		this.sendResponse(response);
+
+		this.jdb.where()
+		.then(_ => {
+			this.sendResponse(response);
+		});
+
 	}
 
 	protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
