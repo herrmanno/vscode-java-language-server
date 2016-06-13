@@ -5,62 +5,33 @@ import {
 } from 'vscode-debugadapter';
 import {DebugProtocol} from 'vscode-debugprotocol';
 import {readFileSync} from 'fs';
-import {basename} from 'path';
-import {Jdb} from "node-jdb";
+import * as path from 'path';
+import {Jdb, JdbRunningState} from "node-jdb/out/jdb";
 
 
 /**
  * This interface should always match the schema found in the mock-debug extension manifest.
  */
 export interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
-	program: string;
+	mainClass: string;
+	classesDir: string;
 }
 
 class MockDebugSession extends DebugSession {
 
-	private static THREAD_ID = 1;
+	static THREAD_ID = 1;
+	static _breakPointId = 0;
+	breakpointRequests = new Array<DebugProtocol.SetBreakpointsArguments>();
 
-	private _breakpointId = 1000;
+	private jdb: Jdb;
 
-	private __currentLine = 0;
-	private get _currentLine() : number {
-		return this.__currentLine;
-    }
-	private set _currentLine(line: number) {
-		this.__currentLine = line;
-		this.sendEvent(new OutputEvent(`line: ${line}\n`));	// print current line on debug console
-	}
-
-	// the initial (and one and only) file we are 'debugging'
-	private _sourceFile: string;
-
-	// the contents (= lines) of the one and only file
-	private _sourceLines = new Array<string>();
-
-	// maps from sourceFile to array of Breakpoints
-	private _breakPoints = new Map<string, DebugProtocol.Breakpoint[]>();
-
-	private _variableHandles = new Handles<string>();
-
-	private _timer;
-
-
-	/**
-	 * Creates a new debug adapter that is used for one debug session.
-	 * We configure the default implementation of a debug adapter here.
-	 */
 	public constructor() {
 		super();
 
-		// this debugger uses zero-based lines and columns
 		this.setDebuggerLinesStartAt1(false);
 		this.setDebuggerColumnsStartAt1(false);
 	}
 
-	/**
-	 * The 'initialize' request is the first request called by the frontend
-	 * to interrogate the features the debug adapter provides.
-	 */
 	protected initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments): void {
 
 		// since this debug adapter can accept configuration requests like 'setBreakpoint' at any time,
@@ -78,26 +49,44 @@ class MockDebugSession extends DebugSession {
 	}
 
 	protected launchRequest(response: DebugProtocol.LaunchResponse, args: LaunchRequestArguments): void {
-
-		// send a custom 'heartbeat' event (for demonstration purposes)
-		this._timer = setInterval(() => {
-			this.sendEvent(new Event('heartbeatEvent'));
-		}, 1000);
-
-		this._sourceFile = args.program;
-		this._sourceLines = readFileSync(this._sourceFile).toString().split('\n');
-
-		this.continueRequest(<DebugProtocol.ContinueResponse>response, { threadId: MockDebugSession.THREAD_ID });
+		var classFile = path.resolve(args.classesDir, args.mainClass.replace(".", "/"));
+		this.jdb = new Jdb();
+		this.jdb.launch(args.mainClass, {workingDir: args.classesDir, classPath: "."})
+		.then(_ => this.enableBreakpoints())
+		.then(_ => this.continueRequest(<DebugProtocol.ContinueResponse>response, { threadId: MockDebugSession.THREAD_ID }));
 	}
 
 	protected disconnectRequest(response: DebugProtocol.DisconnectResponse, args: DebugProtocol.DisconnectArguments): void {
-		// stop sending custom events
-		clearInterval(this._timer);
 		super.disconnectRequest(response, args);
 	}
 
-	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
+	protected enableBreakpoints(args?: DebugProtocol.SetBreakpointsArguments): Promise<any> {
+		if(args) {
+			let [_, className] = args.source.path.match(/(\w+)\.java/);
+		
+			return args.breakpoints.reduce((prom, br) => {
+				return prom.then(_ => {
+					return this.jdb.stopAt(className, br.line);
+				});
+			}, Promise.resolve());
+			
+		}
+		else {
+			return this.breakpointRequests.reduce((prom, req) => {
+				return prom.then(_ => {
+					return this.enableBreakpoints(req);
+				})
+			}, Promise.resolve());
+		}
+	}
 
+	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
+		
+		this.breakpointRequests.push(args)
+		this.sendResponse(response);
+		return;
+
+		/*
 		var path = args.source.path;
 		var clientLines = args.lines;
 
@@ -135,10 +124,10 @@ class MockDebugSession extends DebugSession {
 			breakpoints: breakpoints
 		};
 		this.sendResponse(response);
+		*/
 	}
 
 	protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
-
 		// return the default thread
 		response.body = {
 			threads: [
@@ -149,7 +138,7 @@ class MockDebugSession extends DebugSession {
 	}
 
 	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
-
+		/*
 		const frames = new Array<StackFrame>();
 		const words = this._sourceLines[this._currentLine].trim().split(/\s+/);
 		// create three fake stack frames.
@@ -162,15 +151,16 @@ class MockDebugSession extends DebugSession {
 			stackFrames: frames
 		};
 		this.sendResponse(response);
+		*/
+		this.sendResponse(response);
 	}
 
 	protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
 
 		const frameReference = args.frameId;
 		const scopes = new Array<Scope>();
-		scopes.push(new Scope("Local", this._variableHandles.create("local_" + frameReference), false));
-		scopes.push(new Scope("Closure", this._variableHandles.create("closure_" + frameReference), false));
-		scopes.push(new Scope("Global", this._variableHandles.create("global_" + frameReference), true));
+		scopes.push(new Scope("Local", 1, false));
+		scopes.push(new Scope("Arguments", 2, false));
 
 		response.body = {
 			scopes: scopes
@@ -179,7 +169,7 @@ class MockDebugSession extends DebugSession {
 	}
 
 	protected variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): void {
-
+		/*
 		const variables = [];
 		const id = this._variableHandles.get(args.variablesReference);
 		if (id != null) {
@@ -209,10 +199,32 @@ class MockDebugSession extends DebugSession {
 			variables: variables
 		};
 		this.sendResponse(response);
+		*/
+		this.sendResponse(response);
 	}
 
 	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {
 
+		this.jdb.cont()
+		.then(_ => {
+			var state = this.jdb.getState();
+			switch(state.running) {
+				case JdbRunningState.BREAKPOINT_HIT:
+					this.sendEvent(new StoppedEvent("breakpoint", MockDebugSession.THREAD_ID));
+					break;
+				case JdbRunningState.CAUGHT_EXCEPTION:
+				case JdbRunningState.UNCAUGHT_EXCEPTION:
+					this.sendEvent(new StoppedEvent("exception", MockDebugSession.THREAD_ID));
+					break;
+				case JdbRunningState.TERMINATED:
+					this.sendEvent(new TerminatedEvent());
+					break;
+			}
+
+			this.sendResponse(response);
+		})
+
+		/*
 		// find the breakpoints for the current source file
 		const breakpoints = this._breakPoints.get(this._sourceFile);
 
@@ -251,10 +263,18 @@ class MockDebugSession extends DebugSession {
 		this.sendResponse(response);
 		// no more lines: run to end
 		this.sendEvent(new TerminatedEvent());
+		*/
+
 	}
 
 	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
 
+		this.jdb.step()
+		.then(_ => {
+			this.sendResponse(response);
+		});
+
+		/*
 		for (let ln = this._currentLine+1; ln < this._sourceLines.length; ln++) {
 			if (this._sourceLines[ln].trim().length > 0) {   // find next non-empty line
 				this._currentLine = ln;
@@ -266,6 +286,7 @@ class MockDebugSession extends DebugSession {
 		this.sendResponse(response);
 		// no more lines: run to end
 		this.sendEvent(new TerminatedEvent());
+		*/
 	}
 
 	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
@@ -281,8 +302,8 @@ class MockDebugSession extends DebugSession {
 		switch (request) {
 		case 'infoRequest':
 			response.body = {
-				'currentFile': this.convertDebuggerPathToClient(this._sourceFile),
-				'currentLine': this.convertDebuggerLineToClient(this._currentLine)
+				'currentFile': "Foo.bar",
+				'currentLine': 42
 			};
 			this.sendResponse(response);
 			break;

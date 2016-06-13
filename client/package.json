@@ -37,11 +37,9 @@
         "type": "Java",
         "label": "Java",
         "enableBreakpointsFor": {"languageIds": ["java"]},
-        "program": "./out/debugger.js",
+        "program": "../debugger/out/debugger.js",
+        "args": ["--debug-brk=7890"],
         "runtime": "node",
-        "runtimeArgs": [
-          "--debug=6789"
-        ],
         "configurationAttributes": {
 					"launch": {
 						"required": [ "program" ],
