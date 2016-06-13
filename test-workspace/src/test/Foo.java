@@ -1,5 +1,6 @@
 package test;
 
+import herrmanno.Test;
 import herrmanno.Lib;
 
 public class Foo {

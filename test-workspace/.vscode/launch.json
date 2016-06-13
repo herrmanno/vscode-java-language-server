@@ -5,7 +5,8 @@
             "name": "Java-Debug",
             "type": "Java",
             "request": "launch",
-            "program": "${workspaceroot}/src/test/Main"
+            "mainClass": "test.Main",
+            "workingDir": "${workspaceRoot}"
         }
     ]
 }

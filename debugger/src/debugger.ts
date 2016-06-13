@@ -5,16 +5,18 @@ import {
 } from 'vscode-debugadapter';
 import {DebugProtocol} from 'vscode-debugprotocol';
 import {readFileSync} from 'fs';
+import {platform} from "os";
 import * as path from 'path';
 import {Jdb, JdbRunningState} from "node-jdb/out/jdb";
 
+const WIN = platform() === "win32";
 
 /**
  * This interface should always match the schema found in the mock-debug extension manifest.
  */
 export interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
 	mainClass: string;
-	classesDir: string;
+	workingDir: string;
 }
 
 class MockDebugSession extends DebugSession {
@@ -49,9 +51,12 @@ class MockDebugSession extends DebugSession {
 	}
 
 	protected launchRequest(response: DebugProtocol.LaunchResponse, args: LaunchRequestArguments): void {
-		var classFile = path.resolve(args.classesDir, args.mainClass.replace(".", "/"));
+		let classPathFile = readFileSync(path.resolve(args.workingDir, "javaconfig.json"));
+		let classPathEntries = JSON.parse(classPathFile.toString())["classPath"];
+		let classPath = classPathEntries.join(WIN ? ";" : ":");
+
 		this.jdb = new Jdb();
-		this.jdb.launch(args.mainClass, {workingDir: args.classesDir, classPath: "."})
+		this.jdb.launch(args.mainClass, {workingDir: args.workingDir, classPath})
 		.then(_ => this.enableBreakpoints())
 		.then(_ => this.continueRequest(<DebugProtocol.ContinueResponse>response, { threadId: MockDebugSession.THREAD_ID }));
 	}
@@ -62,11 +67,16 @@ class MockDebugSession extends DebugSession {
 
 	protected enableBreakpoints(args?: DebugProtocol.SetBreakpointsArguments): Promise<any> {
 		if(args) {
-			let [_, className] = args.source.path.match(/(\w+)\.java/);
-		
+			let sourceCode = readFileSync(args.source.path).toString();
+			let fqcn = path.basename(args.source.path).split(".")[0];
+			try {
+				let [_, packageName] = sourceCode.match(/package ([^;]+)/);
+				fqcn = (packageName ? (packageName + ".") : "") + fqcn;
+			} catch(e) {}
+
 			return args.breakpoints.reduce((prom, br) => {
 				return prom.then(_ => {
-					return this.jdb.stopAt(className, br.line);
+					return this.jdb.stopAt(fqcn, br.line);
 				});
 			}, Promise.resolve());
 			
@@ -155,6 +165,15 @@ class MockDebugSession extends DebugSession {
 
 		this.jdb.where()
 		.then(_ => {
+			let frames = this.jdb.getState().frames;
+
+			response.body = {
+				stackFrames: frames.map(f => {
+					//TODO find real path of source file!
+					return new StackFrame(f.nr, f.className + ":" + f.methodName + "(" + f.lineNr + ")", new Source(f.fileName, f.fileName), f.lineNr, 1);
+				})
+			}
+
 			this.sendResponse(response);
 		});
 
