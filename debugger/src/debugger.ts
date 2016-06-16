@@ -15,7 +15,6 @@ const WIN = platform() === "win32";
  * This interface should always match the schema found in the mock-debug extension manifest.
  */
 export interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
-	mainClass: string;
 	workingDir: string;
 }
 
@@ -23,7 +22,9 @@ class MockDebugSession extends DebugSession {
 
 	static THREAD_ID = 1;
 	static _breakPointId = 0;
-	breakpointRequests = new Array<DebugProtocol.SetBreakpointsArguments>();
+	private breakpointRequests = new Array<DebugProtocol.SetBreakpointsArguments>();
+	private javaconfig: any;
+	private launched = false;
 
 	private jdb: Jdb;
 
@@ -52,13 +53,16 @@ class MockDebugSession extends DebugSession {
 
 	protected launchRequest(response: DebugProtocol.LaunchResponse, args: LaunchRequestArguments): void {
 		let classPathFile = readFileSync(path.resolve(args.workingDir, "javaconfig.json"));
-		let classPathEntries = JSON.parse(classPathFile.toString())["classPath"];
-		let classPath = classPathEntries.join(WIN ? ";" : ":");
+		this.javaconfig = JSON.parse(classPathFile.toString());
+		this.javaconfig["srcDir"] = path.resolve(args.workingDir, this.javaconfig["srcDir"]); 
+		let classPath = this.javaconfig["classPath"].map(cp => path.resolve(args.workingDir, cp)).join(WIN ? ";" : ":");
+		let mainClass = this.javaconfig["mainClass"];
 
 		this.jdb = new Jdb();
-		this.jdb.launch(args.mainClass, {workingDir: args.workingDir, classPath})
+		this.jdb.launch(mainClass, {workingDir: args.workingDir, classPath})
 		.then(_ => this.enableBreakpoints())
-		.then(_ => this.continueRequest(<DebugProtocol.ContinueResponse>response, { threadId: MockDebugSession.THREAD_ID }));
+		.then(_ => this.continueRequest(<DebugProtocol.ContinueResponse>response, { threadId: MockDebugSession.THREAD_ID }))
+		.then(_ => this.launched = true);
 	}
 
 	protected disconnectRequest(response: DebugProtocol.DisconnectResponse, args: DebugProtocol.DisconnectArguments): void {
@@ -91,9 +95,13 @@ class MockDebugSession extends DebugSession {
 	}
 
 	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
-		
-		this.breakpointRequests.push(args)
-		this.sendResponse(response);
+		if(!this.launched) {
+			this.breakpointRequests.push(args)
+			this.sendResponse(response);
+		}
+		else {
+			this.enableBreakpoints(args);
+		}
 		return;
 
 		/*
@@ -170,7 +178,7 @@ class MockDebugSession extends DebugSession {
 			response.body = {
 				stackFrames: frames.map(f => {
 					//TODO find real path of source file!
-					return new StackFrame(f.nr, f.className + ":" + f.methodName + "(" + f.lineNr + ")", new Source(f.fileName, f.fileName), f.lineNr, 1);
+					return new StackFrame(f.nr, f.className + ":" + f.methodName + "(" + f.lineNr + ")", this.getSource(f.className), f.lineNr, 1);
 				})
 			}
 
@@ -231,6 +239,8 @@ class MockDebugSession extends DebugSession {
 
 		this.jdb.cont()
 		.then(_ => {
+			this.sendResponse(response);
+
 			var state = this.jdb.getState();
 			switch(state.running) {
 				case JdbRunningState.BREAKPOINT_HIT:
@@ -245,7 +255,6 @@ class MockDebugSession extends DebugSession {
 					break;
 			}
 
-			this.sendResponse(response);
 		})
 
 		/*
@@ -291,11 +300,71 @@ class MockDebugSession extends DebugSession {
 
 	}
 
-	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
+	protected stepInRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
 
 		this.jdb.step()
 		.then(_ => {
 			this.sendResponse(response);
+
+			var state = this.jdb.getState();
+			switch(state.running) {
+				case JdbRunningState.BREAKPOINT_HIT:
+					this.sendEvent(new StoppedEvent("step", MockDebugSession.THREAD_ID));
+					break;
+				case JdbRunningState.CAUGHT_EXCEPTION:
+				case JdbRunningState.UNCAUGHT_EXCEPTION:
+					this.sendEvent(new StoppedEvent("exception", MockDebugSession.THREAD_ID));
+					break;
+				case JdbRunningState.TERMINATED:
+					this.sendEvent(new TerminatedEvent());
+					break;
+			}
+		});
+
+	}
+
+	protected stepOutRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
+
+		this.jdb.stepUp()
+		.then(_ => {
+			this.sendResponse(response);
+
+			var state = this.jdb.getState();
+			switch(state.running) {
+				case JdbRunningState.BREAKPOINT_HIT:
+					this.sendEvent(new StoppedEvent("step", MockDebugSession.THREAD_ID));
+					break;
+				case JdbRunningState.CAUGHT_EXCEPTION:
+				case JdbRunningState.UNCAUGHT_EXCEPTION:
+					this.sendEvent(new StoppedEvent("exception", MockDebugSession.THREAD_ID));
+					break;
+				case JdbRunningState.TERMINATED:
+					this.sendEvent(new TerminatedEvent());
+					break;
+			}
+		});
+
+	}
+
+	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
+
+		this.jdb.next()
+		.then(_ => {
+			this.sendResponse(response);
+
+			var state = this.jdb.getState();
+			switch(state.running) {
+				case JdbRunningState.BREAKPOINT_HIT:
+					this.sendEvent(new StoppedEvent("step", MockDebugSession.THREAD_ID));
+					break;
+				case JdbRunningState.CAUGHT_EXCEPTION:
+				case JdbRunningState.UNCAUGHT_EXCEPTION:
+					this.sendEvent(new StoppedEvent("exception", MockDebugSession.THREAD_ID));
+					break;
+				case JdbRunningState.TERMINATED:
+					this.sendEvent(new TerminatedEvent());
+					break;
+			}
 		});
 
 		/*
@@ -335,6 +404,15 @@ class MockDebugSession extends DebugSession {
 			super.customRequest(request, response, args);
 			break;
 		}
+	}
+
+	protected getSource(className: string): Source {
+		let srcDir: string = this.javaconfig["srcDir"];
+		className = className.replace(".java", "");
+		let srcFileName = className + ".java"
+		let srcFilePath = path.resolve(srcDir, srcFileName);
+
+		return new Source(className, srcFilePath);
 	}
 }
 
