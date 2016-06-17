@@ -8,6 +8,7 @@ import {readFileSync} from 'fs';
 import {platform} from "os";
 import * as path from 'path';
 import {Jdb, JdbRunningState} from "node-jdb/out/jdb";
+import {processors} from "node-jdb"
 
 const WIN = platform() === "win32";
 
@@ -172,8 +173,9 @@ class MockDebugSession extends DebugSession {
 		*/
 
 		this.jdb.where()
-		.then(_ => {
-			let frames = this.jdb.getState().frames;
+		.then(res => {
+			//let frames = this.jdb.getState().frames;
+			let frames = res.frames; 
 
 			response.body = {
 				stackFrames: frames.map(f => {
@@ -238,9 +240,11 @@ class MockDebugSession extends DebugSession {
 	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {
 
 		this.jdb.cont()
-		.then(_ => {
+		.then(res => {
 			this.sendResponse(response);
-
+			this.onMovingResult(res);
+			
+			/*
 			var state = this.jdb.getState();
 			switch(state.running) {
 				case JdbRunningState.BREAKPOINT_HIT:
@@ -254,6 +258,7 @@ class MockDebugSession extends DebugSession {
 					this.sendEvent(new TerminatedEvent());
 					break;
 			}
+			*/
 
 		})
 
@@ -303,9 +308,11 @@ class MockDebugSession extends DebugSession {
 	protected stepInRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
 
 		this.jdb.step()
-		.then(_ => {
+		.then(res => {
 			this.sendResponse(response);
+			this.onMovingResult(res);
 
+			/*
 			var state = this.jdb.getState();
 			switch(state.running) {
 				case JdbRunningState.BREAKPOINT_HIT:
@@ -319,6 +326,7 @@ class MockDebugSession extends DebugSession {
 					this.sendEvent(new TerminatedEvent());
 					break;
 			}
+			*/
 		});
 
 	}
@@ -326,9 +334,11 @@ class MockDebugSession extends DebugSession {
 	protected stepOutRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
 
 		this.jdb.stepUp()
-		.then(_ => {
+		.then(res => {
 			this.sendResponse(response);
+			this.onMovingResult(res);
 
+			/*
 			var state = this.jdb.getState();
 			switch(state.running) {
 				case JdbRunningState.BREAKPOINT_HIT:
@@ -342,16 +352,18 @@ class MockDebugSession extends DebugSession {
 					this.sendEvent(new TerminatedEvent());
 					break;
 			}
+			*/
 		});
 
 	}
 
 	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
-
 		this.jdb.next()
-		.then(_ => {
+		.then(res => {
 			this.sendResponse(response);
+			this.onMovingResult(res);
 
+			/*
 			var state = this.jdb.getState();
 			switch(state.running) {
 				case JdbRunningState.BREAKPOINT_HIT:
@@ -365,6 +377,7 @@ class MockDebugSession extends DebugSession {
 					this.sendEvent(new TerminatedEvent());
 					break;
 			}
+			*/
 		});
 
 		/*
@@ -404,6 +417,24 @@ class MockDebugSession extends DebugSession {
 			super.customRequest(request, response, args);
 			break;
 		}
+	}
+
+	protected onMovingResult(res: processors.MovingResult) {
+			if(res["applicationExited"]) {
+				this.sendEvent(new TerminatedEvent());
+			}
+			else if(res["breakpointHit"]) {
+				this.sendEvent(new StoppedEvent("breakpoint", MockDebugSession.THREAD_ID));
+			}
+			else if(res["stepCompleted"]) {
+				this.sendEvent(new StoppedEvent("step completed", MockDebugSession.THREAD_ID));
+			}
+			else if(res.caughtException) {
+				this.sendEvent(new StoppedEvent("exception (caught)", MockDebugSession.THREAD_ID));
+			}
+			else if(res.uncaughtException) {
+				this.sendEvent(new StoppedEvent("exception (uncaught)", MockDebugSession.THREAD_ID));
+			}
 	}
 
 	protected getSource(className: string): Source {
